@@ -1,0 +1,38 @@
+#!/usr/bin/env python
+import os
+import glob
+import argparse
+from datetime import datetime
+from subprocess import call
+
+
+def main(args):
+    tmpdir = "exports-%s" % str(datetime.now()).replace(' ', '-')
+    call("mkdir {tmpdir}".format(tmpdir=tmpdir), shell=True)
+    call("drive pull --explicitly-export --exports-dir {tmpdir} --export txt --same-exports-dir {files_and_globs}".format(
+            files_and_globs=' '.join(args.files),
+            tmpdir=tmpdir),
+        shell=True)
+
+    for f in glob.glob("{tmpdir}/*".format(tmpdir=tmpdir)):
+        # get rid of carriage returns
+        call("tr -d '\\r' < {fname} > {fname}.bak".format(fname=f), shell=True)
+
+        # now get rid of gdoc comments (appended as [a]comment1 [b]comment2 one per line)
+        with open("{fname}.bak".format(fname=f), 'r') as fold:
+            lines = fold.read().split('\n')
+            last = len(lines)
+            while last > 0 and len(lines[last-1]) > 0 and lines[last-1][0] == '[':
+                last -= 1
+            lines = lines[:last]
+            with open(f, 'w') as fnew:
+                fnew.write('\n'.join(lines))
+        os.remove("{fname}.bak".format(fname=f))
+        os.rename(f, f.rsplit('.', 1)[0])
+
+if __name__=="__main__":
+    parser = argparse.ArgumentParser(description="Pull in changes from drive, exported")
+    parser.add_argument('--files', nargs='+',
+                        help='files and globs to pull', default=['*.tex', '*.bib'])
+    args = parser.parse_args()
+    main(args)

@@ -1,0 +1,29 @@
+#!/usr/bin/env python
+import os
+import argparse
+from datetime import datetime
+from subprocess import call
+
+
+def main(args):
+    files_and_globs = ' '.join(args.files)
+
+    if args.backup:
+        backupdir = "v-%s" % str(datetime.now()).replace(' ', '-')
+        os.mkdir(backupdir)
+        call("drive push --no-prompt {backupdir}".format(backupdir=backupdir), shell=True)
+        call("drive move {files_and_globs} {backupdir}".format(
+            files_and_globs=files_and_globs, backupdir=backupdir), shell=True)
+        os.rmdir(backupdir)
+
+    call("drive push --no-prompt --convert {files_and_globs}".format(
+        files_and_globs=files_and_globs), shell=True)
+
+if __name__=="__main__":
+    parser = argparse.ArgumentParser(description="Push in changes to drive, converting to gdoc")
+    parser.add_argument('--files', nargs='+',
+                        help='files and globs to push', default=['*.tex', '*.bib'])
+    parser.add_argument('--backup', action='store_true', default=False,
+                        help='whether to back up existing files in this folder to v[NUM]')
+    args = parser.parse_args()
+    main(args)
