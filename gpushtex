@@ -8,13 +8,16 @@ from subprocess import call
 def main(args):
     files_and_globs = ' '.join(args.files)
 
-    if args.backup:
-        backupdir = "v-%s" % str(datetime.now()).replace(' ', '-')
-        os.mkdir(backupdir)
-        call("drive push --no-prompt {backupdir}".format(backupdir=backupdir), shell=True)
-        call("drive move {files_and_globs} {backupdir}".format(
-            files_and_globs=files_and_globs, backupdir=backupdir), shell=True)
-        os.rmdir(backupdir)
+    backupdir = "v-%s" % str(datetime.now()).replace(' ', '-')
+    os.mkdir(backupdir)
+    call("drive push --no-prompt {backupdir}".format(backupdir=backupdir), shell=True)
+    call("drive move {files_and_globs} {backupdir}".format(
+        files_and_globs=files_and_globs, backupdir=backupdir), shell=True)
+    os.rmdir(backupdir)
+
+    if not args.backup:
+        # then go ahead and trash it
+        call("drive trash --quiet {backupdir}".format(backupdir=backupdir), shell=True)
 
     call("drive push --no-prompt --convert {files_and_globs}".format(
         files_and_globs=files_and_globs), shell=True)
