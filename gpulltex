@@ -1,34 +1,127 @@
 #!/usr/bin/env python
-import os
-import glob
-import argparse
+from HTMLParser import HTMLParser, HTMLParseError
+from htmlentitydefs import name2codepoint
 from datetime import datetime
 from subprocess import call
+import re, json, sys, urllib2, os, glob, argparse
+
+def html_to_text(html):
+    """
+    Given a piece of HTML, return the plain text it contains, as a unicode string.
+    Throws away:
+       - text from the <head> element
+       - text in <style> and <script> elements
+       - text in Google Doc sidebar comments
+    Also translates entities and char refs into unicode characters.
+    """
+    parser = _HTMLToText()
+    try:
+        parser.feed(html)
+        parser.close()
+    except HTMLParseError:
+        pass
+    return parser.get_text()
+
+
+class _HTMLToText(HTMLParser):
+    """
+    HTMLParser subclass that finds all the text in an html doc.
+    Used by html_to_text.
+    """
+    def __init__(self):
+        HTMLParser.__init__(self)
+        self._buf = []
+        self.hide_output_nesting_level = 0
+
+    def handle_starttag(self, tag, attrs):
+        attrsDict = self.to_dict(attrs)
+        if tag in ['script', 'style', 'head']:
+            self.hide_output_nesting_level = 1
+        elif tag == "a" and "id" in attrsDict and "href" in attrsDict and attrsDict["id"].startswith("cmnt"):
+            # found a Google Doc comment -- remove it
+            if attrsDict["id"].startswith("cmnt_") and attrsDict["href"].startswith("#cmnt"):
+                self.hide_output_nesting_level = 1
+            elif attrsDict["id"].startswith("cmnt") and attrsDict["href"].startswith("#cmnt_"):
+                self.hide_output_nesting_level = 2
+            else:
+                raise Exception("this should not happen")
+        if tag in ('p', 'br') and not self.at_start_of_line():
+            self.append('\n')
+
+    def handle_startendtag(self, tag, attrs):
+        if tag == 'br':
+            self.append('\n')
+
+    def handle_endtag(self, tag):
+        if tag == 'p':
+            self.append('\n')
+        if self.hide_output_nesting_level > 0:
+            self.hide_output_nesting_level -= 1
+
+    def handle_data(self, text):
+        if text:
+            self.append(re.sub(r'\s+', ' ', text))
+
+    def handle_entityref(self, name):
+        if name in name2codepoint:
+            c = unichr(name2codepoint[name])
+            self.append(c)
+
+    def handle_charref(self, name):
+        n = int(name[1:], 16) if name.startswith('x') else int(name)
+        self.append(unichr(n))
+
+    def append(self, str):
+        if self.hide_output_nesting_level == 0:
+            self._buf.append(str)
+
+    def at_start_of_line(self):
+        return len(self._buf) == 0 or self._buf[-1][-1] == '\n'
+
+    def to_dict(self,attrs):
+        dict = {}
+        for (name,val) in attrs:
+            dict[name] = val
+        return dict
+
+    def get_text(self):
+        return re.sub(r' +', ' ', ''.join(self._buf))
+
+def unicode_to_latex(text):
+    """
+    Converts unicode into Latex format: 
+    primarily utf8, with some special characters converted to Latex syntax 
+    """ 
+    tr = [
+        (u'\u2013', "--"),
+        (u'\u2014', "---"),
+        (u'\u2018', "`"),
+        (u'\u2019', "'"),
+        (u'\u201c', "``"),
+        (u'\u201d', "''"),
+        (u'\xa0', ' '), # no-break space
+    ]
+    for a, b in tr:
+        text = text.replace(a, b)
+    return text.encode("utf8")
 
 
 def main(args):
     tmpdir = "exports-%s" % str(datetime.now()).replace(' ', '-')
-    call("mkdir {tmpdir}".format(tmpdir=tmpdir), shell=True)
-    call("drive pull --explicitly-export --exports-dir {tmpdir} --export txt --same-exports-dir {files_and_globs}".format(
+    os.mkdir(tmpdir)
+    call("drive pull --no-prompt --explicitly-export --exports-dir {tmpdir} --export html --same-exports-dir {files_and_globs}".format(
             files_and_globs=' '.join(args.files),
             tmpdir=tmpdir),
         shell=True)
 
-    for f in glob.glob("{tmpdir}/*".format(tmpdir=tmpdir)):
-        # get rid of carriage returns
-        call("tr -d '\\r' < {fname} > {fname}.bak".format(fname=f), shell=True)
-
-        # now get rid of gdoc comments (appended as [a]comment1 [b]comment2 one per line)
-        with open("{fname}.bak".format(fname=f), 'r') as fold:
-            lines = fold.read().split('\n')
-            last = len(lines)
-            while last > 0 and len(lines[last-1]) > 0 and lines[last-1][0] == '[':
-                last -= 1
-            lines = lines[:last]
-            with open(f, 'w') as fnew:
-                fnew.write('\n'.join(lines))
-        os.remove("{fname}.bak".format(fname=f))
-        os.rename(f, f.rsplit('.', 1)[0])
+    for fname in glob.glob("{tmpdir}/*".format(tmpdir=tmpdir)):
+        with open(fname, 'r') as fhtml:
+            html = fhtml.read()
+        text = html_to_text(html)
+        latex = unicode_to_latex(text)
+        with open(fname.rsplit('.', 1)[0], 'w') as ftex:
+            ftex.write(latex)
+        os.remove(fname)
 
 if __name__=="__main__":
     parser = argparse.ArgumentParser(description="Pull in changes from drive, exported")
